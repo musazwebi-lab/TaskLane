@@ -18,10 +18,10 @@ TaskLane is a minimalist distributed task framework built on Redis. Unlike tradi
 
 ```
   📝 You write a function     📦 Redis stores code + tasks     🏃 Workers execute
-  ┌───────────────────┐      ┌───────────────────────┐      ┌──────────────────┐
+  ┌───────────────────┐      ┌────────────────────────┐      ┌──────────────────┐
   │ def handle(p):    │ ───► │ handler: source code   │ ───► │ Worker 1  ✅     │
   │   return {result} │      │ queue: task1,task2,... │      │ Worker 2  ✅     │
-  └───────────────────┘      └───────────────────────┘      │ Worker N  ✅     │
+  └───────────────────┘      └────────────────────────┘      │ Worker N  ✅     │
                                                              └──────────────────┘
 ```
 
@@ -254,7 +254,7 @@ See [examples/](examples/):
 
 ```
 ┌──────────────┐          Redis           ┌──────────────┐
-│  🖥️ Master  │◄────────────────────────►│ 🏃 Worker 1  │
+│  🖥️ Master   │◄────────────────────────►│ 🏃 Worker 1  │
 │              │   tl:handler:{name}      │              │
 │ register()   │   tl:queue:default       │  BRPOP loop  │
 │ submit()     │   tl:delay_config        │  exec(code)  │
