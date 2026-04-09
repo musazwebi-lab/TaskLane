@@ -1,0 +1,21 @@
+[project]
+name = "tasklane"
+version = "0.1.0"
+description = "轻量级 Redis 分布式任务分发框架，Handler 代码通过 Redis 动态下发"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+dependencies = ["redis>=4.0"]
+
+[project.optional-dependencies]
+dashboard = ["flask>=2.0"]
+
+[project.scripts]
+tasklane = "tasklane.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
