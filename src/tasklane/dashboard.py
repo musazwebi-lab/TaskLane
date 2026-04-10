@@ -41,12 +41,18 @@ def create_app(redis_url: str = "", namespace: str = "") -> Flask:
         for w in workers:
             delay = _engine.get_delay_config(w["name"])
             w["delay"] = delay
+            w["has_own_delay"] = _engine.has_delay_config(w["name"])
         return jsonify(workers)
 
     @app.route("/api/events")
     def api_events():
         limit = int(request.args.get("limit", 50))
         return jsonify(_engine.get_events(limit))
+
+    @app.route("/api/events/clear", methods=["POST"])
+    def api_clear_events():
+        _engine.clear_events()
+        return jsonify({"ok": True})
 
     @app.route("/api/handlers")
     def api_handlers():
@@ -147,6 +153,11 @@ def create_app(redis_url: str = "", namespace: str = "") -> Flask:
     def api_stats():
         return jsonify(_engine.get_stats())
 
+    @app.route("/api/stats/clear", methods=["POST"])
+    def api_clear_stats():
+        _engine.clear_stats()
+        return jsonify({"ok": True})
+
     @app.route("/api/results")
     def api_results():
         limit = int(request.args.get("limit", 50))
@@ -229,12 +240,13 @@ pre { background: #f5f5f5; padding: 12px; border-radius: 4px; font-size: 13px;
 <div class="actions">
   <button class="btn btn-primary" onclick="refresh()">Refresh</button>
   <button class="btn btn-danger" onclick="purgeQueue()">Purge Queue</button>
+  <button class="btn btn-danger" onclick="clearStats()">Reset Stats</button>
   <button class="btn btn-default" onclick="showSubmit()">Submit Task</button>
 </div>
 
 <div class="section"><h2>Workers</h2>
 <table><thead><tr>
-  <th>Name</th><th>Status</th><th>Heartbeat</th><th>Handler</th><th>Last Task</th><th>Time</th><th>Error</th><th>Actions</th>
+  <th>Name</th><th>Status</th><th>Heartbeat</th><th>Handler</th><th>Delay</th><th>Last Task</th><th>Time</th><th>Error</th><th>Actions</th>
 </tr></thead><tbody id="workers"></tbody></table></div>
 
 <div class="section"><h2>Handlers</h2>
@@ -251,7 +263,7 @@ pre { background: #f5f5f5; padding: 12px; border-radius: 4px; font-size: 13px;
   <button class="btn btn-primary" onclick="saveDelay()">Save</button>
 </div></div>
 
-<div class="section events"><h2>Event Log</h2>
+<div class="section events"><h2 style="display:inline">Event Log</h2> <button class="btn btn-danger" style="margin-left:12px;vertical-align:middle" onclick="clearEvents()">Clear</button>
 <table><thead><tr><th>Time</th><th>Worker</th><th>Task</th><th>Event</th><th>Detail</th></tr></thead>
 <tbody id="events"></tbody></table></div>
 
@@ -259,30 +271,65 @@ pre { background: #f5f5f5; padding: 12px; border-radius: 4px; font-size: 13px;
 <script>
 const F = (u, o) => fetch(u, o).then(r => r.json());
 
+let _samples = []; // [{time, success}]
+
 async function refresh() {
   const [ov, ws, evs, hs, dl] = await Promise.all([
     F('/api/overview'), F('/api/workers'), F('/api/events'),
     F('/api/handlers'), F('/api/delay')
   ]);
+
+  // Track samples for speed calculation (sliding window, last 2 minutes)
+  const now = Date.now();
+  _samples.push({time: now, success: ov.success});
+  const cutoff = now - 120000;
+  _samples = _samples.filter(s => s.time >= cutoff);
+
+  let _speed = 0;
+  if (_samples.length >= 2) {
+    const first = _samples[0];
+    const last = _samples[_samples.length - 1];
+    const dt = (last.time - first.time) / 60000;
+    if (dt > 0) _speed = (last.success - first.success) / dt;
+  }
+
+  let eta = '-';
+  let speedStr = _speed > 0 ? _speed.toFixed(1) + '/min' : '-';
+  if (_speed > 0 && ov.queue_pending > 0) {
+    const mins = ov.queue_pending / _speed;
+    if (mins < 60) eta = Math.ceil(mins) + 'm';
+    else eta = (mins / 60).toFixed(1) + 'h';
+  }
+
   document.getElementById('cards').innerHTML = [
-    card('Queue', ov.queue_pending, 'pending'),
-    card('Workers', ov.workers_alive + '/' + ov.workers_total, ''),
-    card('Success', ov.success, 'ok'),
-    card('Failed', ov.failed, 'err'),
-    card('Retried', ov.retried, 'pending'),
+    card('Queue', ov.queue_pending, 'pending', eta !== '-' ? 'ETA: ' + eta : ''),
+    card('Workers', ov.workers_alive + '/' + ov.workers_total, '', ''),
+    card('Success', ov.success, 'ok', speedStr !== '-' ? speedStr : ''),
+    card('Failed', ov.failed, 'err', ''),
+    card('Retried', ov.retried, 'pending', ''),
   ].join('');
 
-  document.getElementById('workers').innerHTML = ws.map(w => `<tr>
+  document.getElementById('workers').innerHTML = ws.map(w => {
+    const d = w.delay;
+    const dlabel = w.has_own_delay
+      ? `${d.min_delay}-${d.max_delay}s / ${d.batch_size}×${d.batch_pause}s`
+      : '<span style="color:#999">global</span>';
+    return `<tr>
     <td>${w.name}</td>
     <td><span class="status status-${w.status||'idle'}">${w.status||'idle'}</span></td>
     <td>${w.alive ? '🟢' : '⚫'}</td>
     <td>${w.handler||'-'}</td>
+    <td>${dlabel}
+      <button class="btn btn-default" style="margin-left:4px;padding:2px 6px;font-size:11px" onclick="setWorkerDelay('${w.name}',${d.min_delay},${d.max_delay},${d.batch_size},${d.batch_pause})">Set</button>${
+      w.has_own_delay ? `<button class="btn btn-default" style="margin-left:2px;padding:2px 6px;font-size:11px" onclick="resetWorkerDelay('${w.name}')">Reset</button>` : ''}
+    </td>
     <td>${w.last_task||'-'}</td><td>${w.last_time||'-'}</td>
     <td>${w.error||'-'}</td>
     <td>
       <button class="btn btn-default" onclick="ctrlWorker('${w.name}','pause')">Pause</button>
       <button class="btn btn-default" onclick="ctrlWorker('${w.name}','resume')">Resume</button>
-    </td></tr>`).join('');
+    </td></tr>`;
+  }).join('');
 
   document.getElementById('handlers').innerHTML = hs.length ? hs.map(h => `
     <div class="handler-card"><h3>${h.name}</h3>
@@ -303,8 +350,8 @@ async function refresh() {
   document.getElementById('d-bp').value = dl.batch_pause;
 }
 
-function card(label, value, cls) {
-  return `<div class="card"><div class="label">${label}</div><div class="value ${cls}">${value}</div></div>`;
+function card(label, value, cls, sub) {
+  return `<div class="card"><div class="label">${label}</div><div class="value ${cls}">${value}</div>${sub ? `<div style="font-size:12px;color:#999;margin-top:4px">${sub}</div>` : ''}</div>`;
 }
 
 async function ctrlWorker(name, action) {
@@ -361,6 +408,40 @@ function showSubmit() {
   F('/api/submit', {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({handler, params: JSON.parse(params)})
   }).then(r => { alert('Submitted: ' + r.task_id); refresh(); });
+}
+
+async function setWorkerDelay(name, curMin, curMax, curBs, curBp) {
+  const min = prompt('min_delay (seconds)', curMin);
+  if (min === null) return;
+  const max = prompt('max_delay (seconds)', curMax);
+  if (max === null) return;
+  const bs = prompt('batch_size (0=disabled)', curBs);
+  if (bs === null) return;
+  const bp = prompt('batch_pause (seconds)', curBp);
+  if (bp === null) return;
+  await F('/api/delay/' + encodeURIComponent(name), {method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({min_delay:parseFloat(min),max_delay:parseFloat(max),
+      batch_size:parseInt(bs),batch_pause:parseFloat(bp)})});
+  refresh();
+}
+
+async function resetWorkerDelay(name) {
+  if (!confirm('Reset ' + name + ' to global delay?')) return;
+  await F('/api/delay/' + encodeURIComponent(name), {method:'DELETE'});
+  refresh();
+}
+
+async function clearEvents() {
+  if (!confirm('Clear all event logs?')) return;
+  await F('/api/events/clear', {method:'POST'});
+  refresh();
+}
+
+async function clearStats() {
+  if (!confirm('Reset all stats (success/failed/retried)?')) return;
+  await F('/api/stats/clear', {method:'POST'});
+  refresh();
 }
 
 refresh();

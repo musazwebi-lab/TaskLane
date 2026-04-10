@@ -33,6 +33,7 @@ TaskLane is a minimalist distributed task framework built on Redis. Unlike tradi
 | 🛤️ | **Light-weight Task Queue** | Pure Redis LPUSH/BRPOP queue. No Celery, no RabbitMQ, no heavy dependencies. |
 | 🔄 | **Hot-Swap Handlers** | Register a new handler and Workers pick it up on the next task. Switch what your cluster does in seconds. |
 | 🖥️ | **CLI-First** | Start Workers, register handlers, submit tasks, control everything from the terminal. |
+| 📊 | **Live Dashboard** | Speed, ETA, per-worker control, event log, stats — all in a built-in web panel. |
 
 ---
 
@@ -65,21 +66,21 @@ def handle(params: dict) -> dict:
 
 ```bash
 # 📦 Push handler code to Redis
-tasklane --redis redis://your-redis:6379/0 register add ./handlers/add.py
+tasklane register add ./handlers/add.py --redis redis://your-redis:6379/0
 
 # 🚀 Submit tasks
-tasklane --redis redis://your-redis:6379/0 submit add '{"a": 1, "b": 2}'
-tasklane --redis redis://your-redis:6379/0 submit add '{"a": 10, "b": 20}'
+tasklane submit add '{"a": 1, "b": 2}' --redis redis://your-redis:6379/0
+tasklane submit add '{"a": 10, "b": 20}' --redis redis://your-redis:6379/0
 ```
 
 ### Step 4: Start Workers
 
 ```bash
 # 🏃 On worker machine 1
-tasklane --redis redis://your-redis:6379/0 worker --name w1
+tasklane worker --name w1 --redis redis://your-redis:6379/0
 
 # 🏃 On worker machine 2
-tasklane --redis redis://your-redis:6379/0 worker --name w2
+tasklane worker --name w2 --redis redis://your-redis:6379/0
 ```
 
 Workers connect to Redis, pull the handler code, execute tasks, store results. **No files need to be copied to Worker machines.**
@@ -88,7 +89,7 @@ Workers connect to Redis, pull the handler code, execute tasks, store results. *
 
 ```bash
 # 📊 On Master
-tasklane --redis redis://your-redis:6379/0 dashboard --port 5000
+tasklane dashboard --port 5000 --redis redis://your-redis:6379/0
 # Open http://localhost:5000
 ```
 
@@ -110,10 +111,10 @@ def handle(params: dict) -> dict:
 EOF
 
 # 📦 Register it (with dependencies)
-tasklane --redis redis://your-redis:6379/0 register crawl ./handlers/crawl.py --deps requests
+tasklane register crawl ./handlers/crawl.py --deps requests --redis redis://your-redis:6379/0
 
 # 🚀 Submit tasks — Workers pick up the new code automatically
-tasklane --redis redis://your-redis:6379/0 submit crawl '{"url": "https://example.com"}'
+tasklane submit crawl '{"url": "https://example.com"}' --redis redis://your-redis:6379/0
 ```
 
 No restart. No redeployment. Workers just start running the new code.
@@ -122,7 +123,7 @@ No restart. No redeployment. Workers just start running the new code.
 
 ## 🖥️ CLI Reference
 
-Global flags `--redis` and `--ns` go **before** the subcommand.
+`--redis` and `--ns` go **after** the subcommand.
 
 | Command | Description |
 |---------|-------------|
@@ -133,14 +134,14 @@ Global flags `--redis` and `--ns` go **before** the subcommand.
 | 📋 `handlers` | List registered handlers |
 | 🗑️ `remove-handler NAME` | Remove a handler |
 | 📈 `monitor` | Real-time stats (Ctrl+C to exit) |
-| ⏱️ `set-delay --min 1 --max 3` | Set delay config |
+| ⏱️ `set-delay --min 1 --max 3 [--worker w1]` | Set delay config (global or per-worker) |
 | ⏸️ `pause --worker w1` | Pause a Worker |
 | ▶️ `resume --worker w1` | Resume a Worker |
 | 🧹 `purge` | Clear the task queue |
 
 ```bash
 # Example
-tasklane --redis redis://10.0.0.1:6379/0 worker --name w1
+tasklane worker --name w1 --redis redis://10.0.0.1:6379/0 --ns myproject
 ```
 
 ---
@@ -149,12 +150,15 @@ tasklane --redis redis://10.0.0.1:6379/0 worker --name w1
 
 Built-in web panel for monitoring and control:
 
-- 📈 **Stats cards** — queue depth, success/failure/retry counts, active Workers
-- 🏃 **Worker table** — status, heartbeat, current handler, pause/resume buttons
+![Dashboard](examples/dashboard.png)
+
+- 📈 **Stats cards** — queue depth, speed (tasks/min), ETA, success/failure/retry counts, active Workers
+- 🏃 **Worker table** — status, heartbeat, current handler, per-worker delay config, pause/resume buttons
 - 📦 **Handler management** — view source, upload, delete
-- 📋 **Event log** — task results displayed inline (with `display_fields`)
-- ⏱️ **Delay config** — adjust throttling from the browser
+- 📋 **Event log** — task results with readable IDs, clear button to purge history
+- ⏱️ **Delay config** — global and per-worker throttling from the browser
 - 🚀 **Task submission** — submit tasks directly from the browser
+- 🔄 **Reset stats** — zero out counters with one click
 
 ### display_fields
 
@@ -163,23 +167,6 @@ Control which result fields appear in the event log:
 ```python
 master.register_handler("pi", func, display_fields=["inside", "total"])
 # Event log: pi: inside=392718, total=500000
-```
-
----
-
-## 📝 Handler Files
-
-```python
-# ./handlers/crawl.py
-def handle(params: dict) -> dict:
-    import requests  # imports inside the function
-    resp = requests.get(params["url"])
-    return {"status": resp.status_code, "length": len(resp.text)}
-```
-
-Register with dependencies — Workers auto-install them:
-```bash
-tasklane --redis redis://host:6379/0 register crawl ./crawl.py --deps requests,beautifulsoup4
 ```
 
 ---
@@ -203,10 +190,13 @@ master.register_handler("add", my_task, display_fields=["result"])
 ids = master.submit_bulk("add", [{"a": i, "b": i} for i in range(100)])
 results = master.collect_results(ids, timeout=300)  # {task_id: result_dict}
 
+# Real-time result consumption (BRPOP)
+item = master.pop_result(timeout=5)  # {"task_id": ..., "result": ...} or None
+
 # Single result
 result = master.get_result(task_id)  # dict or None
 
-# Delay control
+# Delay control (global or per-worker)
 master.set_delay(min_delay=1, max_delay=3)
 master.set_delay(worker="w1", min_delay=5)
 
@@ -247,6 +237,7 @@ See [examples/](examples/):
 | `demo.py` | 🧪 Master + Worker in one process (quick testing) |
 | `distributed_pi.py` | 🥧 Distributed Monte Carlo Pi estimation |
 | `echo_handler.py` | 📝 Minimal handler file |
+| `crawl_handler.py` | 🌐 Handler with dependencies (requests + bs4) |
 
 ---
 
@@ -258,11 +249,13 @@ See [examples/](examples/):
 │              │   tl:handler:{name}      │              │
 │ register()   │   tl:queue:default       │  BRPOP loop  │
 │ submit()     │   tl:delay_config        │  exec(code)  │
-│ set_delay()  │   tl:worker:*            │  heartbeat   │
-│ dashboard    │   tl:events              │  auto deps   │
+│ pop_result() │   tl:delay:{worker}      │  heartbeat   │
+│ set_delay()  │   tl:worker:*            │  auto deps   │
+│ dashboard    │   tl:events              │  signal safe │
 └──────────────┘   tl:stats               ├──────────────┤
                    tl:results:*           │ 🏃 Worker N  │
-                   tl:control:*           └──────────────┘
+                   tl:result_queue        └──────────────┘
+                   tl:control:*
 ```
 
 ## 📋 Dependencies

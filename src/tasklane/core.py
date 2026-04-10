@@ -18,11 +18,22 @@ from . import config as C
 class TaskMessage:
     handler: str
     params: dict
-    task_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    task_id: str = ""
     retries: int = 0
     max_retries: int = C.RETRY_MAX
     retry_delay: float = C.RETRY_DELAY
     submitted_at: str = field(default_factory=lambda: time.strftime("%Y-%m-%d %H:%M:%S"))
+
+    def __post_init__(self):
+        if not self.task_id:
+            self.task_id = self._make_id()
+
+    def _make_id(self) -> str:
+        if self.params:
+            parts = [f"{v}" for v in self.params.values()]
+            label = "-".join(parts)[:32]
+            return f"{label}-{uuid.uuid4().hex[:6]}"
+        return uuid.uuid4().hex[:12]
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False)
@@ -188,6 +199,9 @@ class RedisEngine:
     def del_delay_config(self, worker: str):
         self._r.delete(self._k("delay", worker))
 
+    def has_delay_config(self, worker: str) -> bool:
+        return self._r.exists(self._k("delay", worker)) > 0
+
     # ── Event Log ──
 
     def log_event(self, worker: str, task_id: str, status: str,
@@ -206,6 +220,9 @@ class RedisEngine:
         raw = self._r.lrange(self._k("events"), 0, limit - 1)
         return [json.loads(r) for r in raw]
 
+    def clear_events(self):
+        self._r.delete(self._k("events"))
+
     # ── Stats ──
 
     def incr_stat(self, field: str, n: int = 1):
@@ -215,15 +232,29 @@ class RedisEngine:
         raw = self._r.hgetall(self._k("stats"))
         return {k: int(v) for k, v in raw.items()}
 
+    def clear_stats(self):
+        self._r.delete(self._k("stats"))
+
     # ── Task Results ──
 
     def save_result(self, task_id: str, result: dict):
-        self._r.set(self._k("results", task_id),
-                    json.dumps(result, ensure_ascii=False), ex=C.RESULT_TTL)
+        data = json.dumps(result, ensure_ascii=False)
+        self._r.set(self._k("results", task_id), data, ex=C.RESULT_TTL)
+        # Also push to result queue for real-time consumption
+        self._r.lpush(self._k("result_queue"),
+                      json.dumps({"task_id": task_id, "result": result},
+                                 ensure_ascii=False))
 
     def get_result(self, task_id: str) -> dict | None:
         raw = self._r.get(self._k("results", task_id))
         return json.loads(raw) if raw else None
+
+    def pop_result(self, timeout: int = 5) -> dict | None:
+        """BRPOP one result from the result queue. Returns {"task_id": ..., "result": ...} or None."""
+        item = self._r.brpop(self._k("result_queue"), timeout=timeout)
+        if item is None:
+            return None
+        return json.loads(item[1])
 
     def list_results(self, limit: int = 50) -> list[dict]:
         """Scan result keys and return a list of {task_id, result}."""

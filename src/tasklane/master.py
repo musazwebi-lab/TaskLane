@@ -113,6 +113,10 @@ class Master:
     def get_result(self, task_id: str) -> dict | None:
         return self._engine.get_result(task_id)
 
+    def pop_result(self, timeout: int = 5) -> dict | None:
+        """Pop one result from the result queue (BRPOP). Returns {"task_id": ..., "result": ...} or None."""
+        return self._engine.pop_result(timeout)
+
     def collect_results(self, task_ids: list[str], timeout: float = 300,
                         poll_interval: float = 1.0) -> dict[str, dict]:
         """Wait and collect results for a list of task IDs.

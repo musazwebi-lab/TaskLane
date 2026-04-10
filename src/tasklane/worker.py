@@ -72,15 +72,27 @@ class Worker:
         log.info(f"Loaded handler '{name}' v{data['version']}")
         return fn
 
+    # pip package name → import name mapping
+    _IMPORT_MAP = {
+        "beautifulsoup4": "bs4",
+        "pillow": "PIL",
+        "scikit-learn": "sklearn",
+        "python-dateutil": "dateutil",
+        "pyyaml": "yaml",
+        "opencv-python": "cv2",
+    }
+
     @staticmethod
     def _ensure_deps(deps: list[str]):
         for pkg in deps:
+            import_name = Worker._IMPORT_MAP.get(pkg, pkg.replace("-", "_"))
             try:
-                importlib.import_module(pkg)
+                importlib.import_module(import_name)
             except ImportError:
                 log.info(f"Installing dependency: {pkg}")
                 subprocess.check_call(
-                    [sys.executable, "-m", "pip", "install", "-q", pkg],
+                    [sys.executable, "-m", "pip", "install", "-q",
+                     "--break-system-packages", pkg],
                     stdout=subprocess.DEVNULL,
                 )
 
@@ -92,14 +104,20 @@ class Worker:
             self._engine.update_state(self.name, "waiting",
                                       last_task=self._last_task_id,
                                       handler=self._last_handler)
-            time.sleep(random.uniform(conf["min_delay"], conf["max_delay"]))
+            self._interruptible_sleep(random.uniform(conf["min_delay"], conf["max_delay"]))
         # batch pause
         bs = conf["batch_size"]
         if bs > 0:
             count = self._engine.incr_batch(self.name)
             if count % bs == 0:
                 log.info(f"Batch pause: {conf['batch_pause']}s (executed {count} tasks)")
-                time.sleep(conf["batch_pause"])
+                self._interruptible_sleep(conf["batch_pause"])
+
+    def _interruptible_sleep(self, seconds: float):
+        """Sleep in 1s intervals, checking _running each iteration."""
+        end = time.time() + seconds
+        while self._running and time.time() < end:
+            time.sleep(min(1.0, end - time.time()))
 
     # ── Task Execution ──
 
@@ -112,25 +130,42 @@ class Worker:
             fn = self._load_handler(msg.handler)
             result = fn(msg.params) or {}
 
-            self._engine.update_state(self.name, "ok",
-                                      last_task=msg.task_id,
-                                      count=len(result),
-                                      handler=msg.handler)
-            self._engine.save_result(msg.task_id, result)
+            # ── Defer signals during result save ──
+            old_sigint = signal.getsignal(signal.SIGINT)
+            old_sigterm = signal.getsignal(signal.SIGTERM)
+            _deferred_stop = False
 
-            # Build detail with display_fields if available
-            handler_data = self._engine.load_handler(msg.handler)
-            display_fields = handler_data.get("display_fields", []) if handler_data else []
-            if display_fields:
-                parts = [f"{f}={result.get(f)}" for f in display_fields if f in result]
-                detail = f"{msg.handler}: {', '.join(parts)}"
-            else:
-                detail = f"{msg.handler}: {len(result)} fields"
-            self._engine.log_event(self.name, msg.task_id, "ok", detail)
-            self._engine.incr_stat("success")
+            def _defer(signum, frame):
+                nonlocal _deferred_stop
+                _deferred_stop = True
 
-            if self._on_success:
-                self._on_success(msg.task_id, msg.handler, msg.params, result)
+            signal.signal(signal.SIGINT, _defer)
+            signal.signal(signal.SIGTERM, _defer)
+            try:
+                self._engine.update_state(self.name, "ok",
+                                          last_task=msg.task_id,
+                                          count=len(result),
+                                          handler=msg.handler)
+                self._engine.save_result(msg.task_id, result)
+
+                handler_data = self._engine.load_handler(msg.handler)
+                display_fields = handler_data.get("display_fields", []) if handler_data else []
+                if display_fields:
+                    parts = [f"{f}={result.get(f)}" for f in display_fields if f in result]
+                    detail = f"{msg.handler}: {', '.join(parts)}"
+                else:
+                    detail = f"{msg.handler}: {len(result)} fields"
+                self._engine.log_event(self.name, msg.task_id, "ok", detail)
+                self._engine.incr_stat("success")
+
+                if self._on_success:
+                    self._on_success(msg.task_id, msg.handler, msg.params, result)
+            finally:
+                signal.signal(signal.SIGINT, old_sigint)
+                signal.signal(signal.SIGTERM, old_sigterm)
+                if _deferred_stop:
+                    log.info("Stop signal received during result save, stopping now...")
+                    self._running = False
 
         except Exception as exc:
             error_str = str(exc)

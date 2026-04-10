@@ -1,19 +1,11 @@
 """TaskLane CLI entry point.
 
-Global flags --redis and --ns go before the subcommand.
+--redis and --ns are specified after the subcommand.
 
 Usage:
-    tasklane --redis redis://host:6379/0 worker --name w1
-    tasklane --redis redis://host:6379/0 dashboard --port 5000
-    tasklane --redis redis://host:6379/0 submit handler_name '{"key": "value"}'
-    tasklane --redis redis://host:6379/0 register handler_name ./handler.py
-    tasklane --redis redis://host:6379/0 handlers
-    tasklane --redis redis://host:6379/0 remove-handler handler_name
-    tasklane --redis redis://host:6379/0 set-delay --min 5 --max 10
-    tasklane --redis redis://host:6379/0 monitor
-    tasklane --redis redis://host:6379/0 pause [--worker w1]
-    tasklane --redis redis://host:6379/0 resume [--worker w1]
-    tasklane --redis redis://host:6379/0 purge
+    tasklane worker --name w1 --redis redis://host:6379/0 --ns myns
+    tasklane dashboard --port 5000 --redis redis://host:6379/0 --ns myns
+    tasklane submit handler_name '{"key": "value"}' --redis redis://host:6379/0
 """
 
 from __future__ import annotations
@@ -132,36 +124,44 @@ def cmd_purge(args):
 def main():
     parser = argparse.ArgumentParser(prog="tasklane",
                                      description="TaskLane distributed task dispatching framework")
-    parser.add_argument("--redis", default="", help="Redis URL")
-    parser.add_argument("--ns", default="", help="Namespace")
     sub = parser.add_subparsers(dest="cmd")
+
+    def add_common(p):
+        p.add_argument("--redis", default="", help="Redis URL")
+        p.add_argument("--ns", default="", help="Namespace")
 
     # worker
     p = sub.add_parser("worker", help="Start a Worker")
     p.add_argument("--name", default="worker", help="Worker name")
+    add_common(p)
 
     # dashboard
     p = sub.add_parser("dashboard", help="Start the Web Dashboard")
     p.add_argument("--host", default="0.0.0.0")
     p.add_argument("--port", type=int, default=5000)
+    add_common(p)
 
     # submit
     p = sub.add_parser("submit", help="Submit a task")
     p.add_argument("handler", help="Handler name")
     p.add_argument("params", nargs="?", default="{}", help="Params JSON")
+    add_common(p)
 
     # register
     p = sub.add_parser("register", help="Register a Handler")
     p.add_argument("name", help="Handler name")
     p.add_argument("file", help="Python source file path")
     p.add_argument("--deps", default="", help="Dependencies, comma-separated")
+    add_common(p)
 
     # handlers
-    sub.add_parser("handlers", help="List all Handlers")
+    p = sub.add_parser("handlers", help="List all Handlers")
+    add_common(p)
 
     # remove-handler
     p = sub.add_parser("remove-handler", help="Remove a Handler")
     p.add_argument("name", help="Handler name")
+    add_common(p)
 
     # set-delay
     p = sub.add_parser("set-delay", help="Set delay parameters")
@@ -170,18 +170,24 @@ def main():
     p.add_argument("--max", type=float, default=None)
     p.add_argument("--batch-size", type=int, default=None)
     p.add_argument("--batch-pause", type=float, default=None)
+    add_common(p)
 
     # monitor
-    sub.add_parser("monitor", help="Real-time monitoring")
+    p = sub.add_parser("monitor", help="Real-time monitoring")
+    add_common(p)
 
     # pause / resume / purge
     p = sub.add_parser("pause", help="Pause Worker")
     p.add_argument("--worker", default="")
+    add_common(p)
     p = sub.add_parser("resume", help="Resume Worker")
     p.add_argument("--worker", default="")
-    sub.add_parser("purge", help="Purge queue")
+    add_common(p)
+    p = sub.add_parser("purge", help="Purge queue")
+    add_common(p)
 
     args = parser.parse_args()
+
     cmds = {
         "worker": cmd_worker, "dashboard": cmd_dashboard,
         "submit": cmd_submit, "register": cmd_register,
