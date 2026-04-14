@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.0 (2026-04-15)
+
+### Features
+
+- **Per-worker stats**: Each worker now tracks its own success/retried/failed counts via `chictr:wstats:{worker}` Redis keys. Dashboard worker table shows Completed and Speed columns.
+- **Dashboard UI redesign**: Cleaner layout with badge-style status indicators, compact panels, grid-2 layout for handlers/delay and event log.
+
+---
+
 ## v0.2.1 (2026-04-14)
 
 ### Fixes

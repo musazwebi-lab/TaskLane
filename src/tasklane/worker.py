@@ -90,11 +90,16 @@ class Worker:
                 importlib.import_module(import_name)
             except ImportError:
                 log.info(f"Installing dependency: {pkg}")
-                subprocess.check_call(
-                    [sys.executable, "-m", "pip", "install", "-q",
-                     "--break-system-packages", pkg],
-                    stdout=subprocess.DEVNULL,
-                )
+                cmd = [sys.executable, "-m", "pip", "install", "-q", pkg]
+                try:
+                    subprocess.check_call(
+                        cmd + ["--break-system-packages"],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    )
+                except subprocess.CalledProcessError:
+                    subprocess.check_call(
+                        cmd, stdout=subprocess.DEVNULL,
+                    )
 
     # ── Delay Control ──
 
@@ -157,6 +162,7 @@ class Worker:
                     detail = f"{msg.handler}: {len(result)} fields"
                 self._engine.log_event(self.name, msg.task_id, "ok", detail)
                 self._engine.incr_stat("success")
+                self._engine.incr_worker_stat(self.name, "success")
 
                 if self._on_success:
                     self._on_success(msg.task_id, msg.handler, msg.params, result)
@@ -178,6 +184,7 @@ class Worker:
                 self._engine.log_event(self.name, msg.task_id, "retrying",
                                        f"retry {msg.retries}/{msg.max_retries}: {error_str}")
                 self._engine.incr_stat("retried")
+                self._engine.incr_worker_stat(self.name, "retried")
                 log.warning(f"Task {msg.task_id} retrying {msg.retries}/{msg.max_retries}: {error_str}")
             else:
                 self._engine.update_state(self.name, "error",
@@ -186,6 +193,7 @@ class Worker:
                 self._engine.log_event(self.name, msg.task_id, "error",
                                        f"max retries: {error_str}")
                 self._engine.incr_stat("failed")
+                self._engine.incr_worker_stat(self.name, "failed")
                 log.error(f"Task {msg.task_id} failed: {error_str}")
 
                 if self._on_failure:

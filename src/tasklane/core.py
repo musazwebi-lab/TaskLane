@@ -228,12 +228,22 @@ class RedisEngine:
     def incr_stat(self, field: str, n: int = 1):
         self._r.hincrby(self._k("stats"), field, n)
 
+    def incr_worker_stat(self, worker: str, field: str, n: int = 1):
+        self._r.hincrby(self._k("wstats", worker), field, n)
+
+    def get_worker_stats(self, worker: str) -> dict:
+        raw = self._r.hgetall(self._k("wstats", worker))
+        return {k: int(v) for k, v in raw.items()}
+
     def get_stats(self) -> dict:
         raw = self._r.hgetall(self._k("stats"))
         return {k: int(v) for k, v in raw.items()}
 
     def clear_stats(self):
         self._r.delete(self._k("stats"))
+        # Also clear per-worker stats
+        for k in self._r.keys(self._k("wstats", "*")):
+            self._r.delete(k)
 
     # ── Task Results ──
 

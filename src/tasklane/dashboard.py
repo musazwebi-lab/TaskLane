@@ -42,6 +42,7 @@ def create_app(redis_url: str = "", namespace: str = "") -> Flask:
             delay = _engine.get_delay_config(w["name"])
             w["delay"] = delay
             w["has_own_delay"] = _engine.has_delay_config(w["name"])
+            w["stats"] = _engine.get_worker_stats(w["name"])
         return jsonify(workers)
 
     @app.route("/api/events")
@@ -189,160 +190,179 @@ INDEX_HTML = """<!DOCTYPE html>
 <title>TaskLane Dashboard</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: -apple-system, 'Segoe UI', sans-serif; background: #f0f2f5; color: #333; }
-.container { max-width: 1200px; margin: 0 auto; padding: 20px; }
-h1 { font-size: 24px; margin-bottom: 20px; }
-h2 { font-size: 18px; margin-bottom: 12px; }
-.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; margin-bottom: 24px; }
-.card { background: #fff; border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
-.card .label { font-size: 13px; color: #888; margin-bottom: 4px; }
-.card .value { font-size: 28px; font-weight: 600; }
-.ok { color: #52c41a; } .err { color: #f5222d; } .pending { color: #1890ff; }
-table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px;
-  overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.1); margin-bottom: 24px; }
-th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #f0f0f0; font-size: 14px; }
-th { background: #fafafa; font-weight: 600; }
-.status { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
-.status-ok { background: #f6ffed; color: #52c41a; }
-.status-running { background: #e6f7ff; color: #1890ff; }
-.status-idle { background: #f5f5f5; color: #999; }
-.status-paused { background: #fffbe6; color: #faad14; }
-.status-error { background: #fff1f0; color: #f5222d; }
-.status-retrying { background: #fff7e6; color: #fa8c16; }
-.status-stopped { background: #f5f5f5; color: #666; }
-.section { margin-bottom: 24px; }
-.actions { display: flex; gap: 8px; margin-bottom: 24px; flex-wrap: wrap; }
-.btn { padding: 6px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; }
-.btn-primary { background: #1890ff; color: #fff; }
-.btn-danger { background: #f5222d; color: #fff; }
-.btn-default { background: #fff; border: 1px solid #d9d9d9; }
-.btn:hover { opacity: .85; }
-.events { max-height: 300px; overflow-y: auto; }
-.delay-form { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; }
+body { font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; background: #f5f6fa; color: #2d3436; font-size: 14px; }
+.container { max-width: 1280px; margin: 0 auto; padding: 24px; }
+header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+header h1 { font-size: 22px; font-weight: 700; color: #2d3436; }
+.header-actions { display: flex; gap: 8px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 24px; }
+.card { background: #fff; border-radius: 10px; padding: 16px; box-shadow: 0 1px 4px rgba(0,0,0,.06); }
+.card .label { font-size: 11px; color: #999; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+.card .value { font-size: 26px; font-weight: 700; }
+.card .sub { font-size: 11px; color: #999; margin-top: 4px; }
+.ok { color: #00b894; } .err { color: #d63031; } .pending { color: #0984e3; }
+.panel { background: #fff; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,.06); margin-bottom: 20px; overflow: hidden; }
+.panel-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid #f0f0f0; }
+.panel-header h2 { font-size: 15px; font-weight: 600; }
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 9px 14px; text-align: left; border-bottom: 1px solid #f5f5f5; font-size: 13px; }
+th { font-weight: 600; color: #666; font-size: 11px; text-transform: uppercase; letter-spacing: .3px; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 500; }
+.badge-ok { background: #e8f8f5; color: #00b894; }
+.badge-running { background: #e3f2fd; color: #0984e3; }
+.badge-idle { background: #f5f5f5; color: #999; }
+.badge-paused { background: #fff9e6; color: #e17055; }
+.badge-error { background: #ffeef0; color: #d63031; }
+.badge-retrying { background: #fff3e0; color: #e17055; }
+.badge-stopped { background: #f0f0f0; color: #666; }
+.badge-waiting { background: #f3e5f5; color: #6c5ce7; }
+.btn { padding: 5px 12px; border: none; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 500; transition: opacity .15s; }
+.btn:hover { opacity: .8; }
+.btn-primary { background: #0984e3; color: #fff; }
+.btn-danger { background: #d63031; color: #fff; }
+.btn-ghost { background: transparent; border: 1px solid #ddd; color: #666; }
+.btn-sm { padding: 3px 8px; font-size: 11px; }
+.delay-form { display: flex; gap: 10px; padding: 14px 18px; flex-wrap: wrap; align-items: end; }
 .delay-form .field { display: flex; flex-direction: column; }
-.delay-form label { font-size: 12px; color: #888; margin-bottom: 4px; }
-.delay-form input { width: 100px; padding: 6px 8px; border: 1px solid #d9d9d9; border-radius: 4px; }
-textarea { width: 100%; min-height: 120px; padding: 8px; border: 1px solid #d9d9d9;
-  border-radius: 4px; font-family: monospace; font-size: 13px; }
-.handler-card { background: #fff; border-radius: 8px; padding: 16px;
-  box-shadow: 0 1px 3px rgba(0,0,0,.1); margin-bottom: 12px; }
-.handler-card h3 { font-size: 15px; margin-bottom: 8px; }
-.handler-meta { font-size: 12px; color: #888; margin-bottom: 8px; }
-pre { background: #f5f5f5; padding: 12px; border-radius: 4px; font-size: 13px;
-  overflow-x: auto; max-height: 200px; }
+.delay-form label { font-size: 11px; color: #999; margin-bottom: 3px; }
+.delay-form input { width: 90px; padding: 5px 8px; border: 1px solid #e0e0e0; border-radius: 6px; font-size: 13px; }
+.events-wrap { max-height: 280px; overflow-y: auto; }
+.handler-card { padding: 12px 18px; border-bottom: 1px solid #f5f5f5; }
+.handler-card:last-child { border-bottom: none; }
+.handler-meta { font-size: 11px; color: #999; margin-bottom: 6px; }
+.worker-sub { font-size: 11px; color: #999; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+@media (max-width: 768px) { .grid-2 { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
 <div class="container">
-<h1>TaskLane Dashboard</h1>
+<header>
+  <h1>TaskLane</h1>
+  <div class="header-actions">
+    <button class="btn btn-primary" onclick="refresh()">Refresh</button>
+    <button class="btn btn-ghost" onclick="showSubmit()">Submit Task</button>
+    <button class="btn btn-danger" onclick="purgeQueue()">Purge</button>
+    <button class="btn btn-danger" onclick="clearStats()">Reset</button>
+  </div>
+</header>
+
 <div class="cards" id="cards"></div>
 
-<div class="actions">
-  <button class="btn btn-primary" onclick="refresh()">Refresh</button>
-  <button class="btn btn-danger" onclick="purgeQueue()">Purge Queue</button>
-  <button class="btn btn-danger" onclick="clearStats()">Reset Stats</button>
-  <button class="btn btn-default" onclick="showSubmit()">Submit Task</button>
-</div>
-
-<div class="section"><h2>Workers</h2>
+<div class="panel"><div class="panel-header"><h2>Workers</h2></div>
 <table><thead><tr>
-  <th>Name</th><th>Status</th><th>Heartbeat</th><th>Handler</th><th>Delay</th><th>Last Task</th><th>Time</th><th>Error</th><th>Actions</th>
+  <th>Name</th><th>Status</th><th>Handler</th><th>Completed</th><th>Speed</th><th>Delay</th><th>Last Task</th><th>Error</th><th>Actions</th>
 </tr></thead><tbody id="workers"></tbody></table></div>
 
-<div class="section"><h2>Handlers</h2>
-<div id="handlers"></div>
-<button class="btn btn-default" style="margin-top:8px" onclick="showUploadHandler()">Upload Handler</button>
+<div class="grid-2">
+<div>
+<div class="panel"><div class="panel-header"><h2>Handlers</h2>
+  <button class="btn btn-ghost btn-sm" onclick="showUploadHandler()">Upload</button>
+</div><div id="handlers"></div></div>
+
+<div class="panel"><div class="panel-header"><h2>Global Delay</h2></div>
+<div class="delay-form">
+  <div class="field"><label>min</label><input id="d-min" type="number" step="0.1"></div>
+  <div class="field"><label>max</label><input id="d-max" type="number" step="0.1"></div>
+  <div class="field"><label>batch</label><input id="d-bs" type="number"></div>
+  <div class="field"><label>pause</label><input id="d-bp" type="number" step="0.1"></div>
+  <button class="btn btn-primary btn-sm" onclick="saveDelay()">Save</button>
+</div></div>
 </div>
 
-<div class="section"><h2>Delay Config</h2>
-<div class="delay-form" id="delay-form">
-  <div class="field"><label>min_delay</label><input id="d-min" type="number" step="0.1"></div>
-  <div class="field"><label>max_delay</label><input id="d-max" type="number" step="0.1"></div>
-  <div class="field"><label>batch_size</label><input id="d-bs" type="number"></div>
-  <div class="field"><label>batch_pause</label><input id="d-bp" type="number" step="0.1"></div>
-  <button class="btn btn-primary" onclick="saveDelay()">Save</button>
-</div></div>
-
-<div class="section events"><h2 style="display:inline">Event Log</h2> <button class="btn btn-danger" style="margin-left:12px;vertical-align:middle" onclick="clearEvents()">Clear</button>
+<div class="panel"><div class="panel-header"><h2>Event Log</h2>
+  <button class="btn btn-danger btn-sm" onclick="clearEvents()">Clear</button>
+</div><div class="events-wrap">
 <table><thead><tr><th>Time</th><th>Worker</th><th>Task</th><th>Event</th><th>Detail</th></tr></thead>
-<tbody id="events"></tbody></table></div>
+<tbody id="events"></tbody></table></div></div>
+</div>
 
 </div>
 <script>
 const F = (u, o) => fetch(u, o).then(r => r.json());
+let _samples = [];
+let _wSamples = {};
 
-let _samples = []; // [{time, success}]
+function wSpeed(name, success) {
+  if (!_wSamples[name]) _wSamples[name] = [];
+  const now = Date.now();
+  _wSamples[name].push({time: now, s: success});
+  _wSamples[name] = _wSamples[name].filter(x => x.time >= now - 120000);
+  const arr = _wSamples[name];
+  if (arr.length < 2) return 0;
+  const dt = (arr[arr.length-1].time - arr[0].time) / 60000;
+  return dt > 0 ? (arr[arr.length-1].s - arr[0].s) / dt : 0;
+}
 
 async function refresh() {
   const [ov, ws, evs, hs, dl] = await Promise.all([
     F('/api/overview'), F('/api/workers'), F('/api/events'),
     F('/api/handlers'), F('/api/delay')
   ]);
-
-  // Track samples for speed calculation (sliding window, last 2 minutes)
   const now = Date.now();
   _samples.push({time: now, success: ov.success});
-  const cutoff = now - 120000;
-  _samples = _samples.filter(s => s.time >= cutoff);
-
+  _samples = _samples.filter(s => s.time >= now - 120000);
   let _speed = 0;
   if (_samples.length >= 2) {
-    const first = _samples[0];
-    const last = _samples[_samples.length - 1];
-    const dt = (last.time - first.time) / 60000;
-    if (dt > 0) _speed = (last.success - first.success) / dt;
+    const f = _samples[0], l = _samples[_samples.length-1];
+    const dt = (l.time - f.time) / 60000;
+    if (dt > 0) _speed = (l.success - f.success) / dt;
   }
-
-  let eta = '-';
-  let speedStr = _speed > 0 ? _speed.toFixed(1) + '/min' : '-';
+  let eta = '-', speedStr = _speed > 0 ? _speed.toFixed(1) + '/min' : '-';
   if (_speed > 0 && ov.queue_pending > 0) {
-    const mins = ov.queue_pending / _speed;
-    if (mins < 60) eta = Math.ceil(mins) + 'm';
-    else eta = (mins / 60).toFixed(1) + 'h';
+    const m = ov.queue_pending / _speed;
+    eta = m < 60 ? Math.ceil(m) + 'm' : (m/60).toFixed(1) + 'h';
   }
-
   document.getElementById('cards').innerHTML = [
-    card('Queue', ov.queue_pending, 'pending', eta !== '-' ? 'ETA: ' + eta : ''),
-    card('Workers', ov.workers_alive + '/' + ov.workers_total, '', ''),
+    card('Queue', ov.queue_pending, 'pending', eta !== '-' ? 'ETA: '+eta : ''),
+    card('Workers', ov.workers_alive+'/'+ov.workers_total, '', ''),
     card('Success', ov.success, 'ok', speedStr !== '-' ? speedStr : ''),
     card('Failed', ov.failed, 'err', ''),
     card('Retried', ov.retried, 'pending', ''),
   ].join('');
 
   document.getElementById('workers').innerHTML = ws.map(w => {
-    const d = w.delay;
+    const d = w.delay, st = w.stats || {};
+    const completed = (st.success||0);
+    const spd = wSpeed(w.name, completed);
+    const spdStr = spd > 0 ? spd.toFixed(1)+'/min' : '-';
+    const badge = w.alive
+      ? (w.status==='running' ? 'badge-running' : w.status==='paused' ? 'badge-paused' : w.status==='error' ? 'badge-error' : w.status==='waiting' ? 'badge-waiting' : w.status==='retrying' ? 'badge-retrying' : 'badge-ok')
+      : (w.status==='stopped' ? 'badge-stopped' : 'badge-idle');
     const dlabel = w.has_own_delay
-      ? `${d.min_delay}-${d.max_delay}s / ${d.batch_size}×${d.batch_pause}s`
-      : '<span style="color:#999">global</span>';
-    return `<tr>
-    <td>${w.name}</td>
-    <td><span class="status status-${w.status||'idle'}">${w.status||'idle'}</span></td>
-    <td>${w.alive ? '🟢' : '⚫'}</td>
-    <td>${w.handler||'-'}</td>
-    <td>${dlabel}
-      <button class="btn btn-default" style="margin-left:4px;padding:2px 6px;font-size:11px" onclick="setWorkerDelay('${w.name}',${d.min_delay},${d.max_delay},${d.batch_size},${d.batch_pause})">Set</button>${
-      w.has_own_delay ? `<button class="btn btn-default" style="margin-left:2px;padding:2px 6px;font-size:11px" onclick="resetWorkerDelay('${w.name}')">Reset</button>` : ''}
-    </td>
-    <td>${w.last_task||'-'}</td><td>${w.last_time||'-'}</td>
-    <td>${w.error||'-'}</td>
-    <td>
-      <button class="btn btn-default" onclick="ctrlWorker('${w.name}','pause')">Pause</button>
-      <button class="btn btn-default" onclick="ctrlWorker('${w.name}','resume')">Resume</button>
-    </td></tr>`;
+      ? d.min_delay+'-'+d.max_delay+'s / '+d.batch_size+'\\u00d7'+d.batch_pause+'s'
+      : '<span style="color:#bbb">global</span>';
+    return '<tr>'
+      +'<td><b>'+w.name+'</b></td>'
+      +'<td><span class="badge '+badge+'">'+(w.status||'idle')+'</span></td>'
+      +'<td>'+(w.handler||'-')+'</td>'
+      +'<td>'+completed+(st.failed?' <span style="color:#d63031;font-size:11px">('+st.failed+' err)</span>':'')+'</td>'
+      +'<td>'+spdStr+'</td>'
+      +'<td>'+dlabel
+      +' <button class="btn btn-ghost btn-sm" onclick="setWorkerDelay(\\x27'+w.name+'\\x27,'+d.min_delay+','+d.max_delay+','+d.batch_size+','+d.batch_pause+')">Set</button>'
+      +(w.has_own_delay?'<button class="btn btn-ghost btn-sm" onclick="resetWorkerDelay(\\x27'+w.name+'\\x27)">Reset</button>':'')
+      +'</td>'
+      +'<td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+(w.last_task||'')+'">'+(w.last_task||'-')+'</td>'
+      +'<td style="color:#d63031">'+(w.error||'-')+'</td>'
+      +'<td>'
+      +'<button class="btn btn-ghost btn-sm" onclick="ctrlWorker(\\x27'+w.name+'\\x27,\\x27pause\\x27)">Pause</button> '
+      +'<button class="btn btn-ghost btn-sm" onclick="ctrlWorker(\\x27'+w.name+'\\x27,\\x27resume\\x27)">Resume</button>'
+      +'</td></tr>';
   }).join('');
 
-  document.getElementById('handlers').innerHTML = hs.length ? hs.map(h => `
-    <div class="handler-card"><h3>${h.name}</h3>
-    <div class="handler-meta">v${h.version} | deps: ${h.deps.join(', ')||'none'} | ${h.updated}</div>
-    <button class="btn btn-default" onclick="viewHandler('${h.name}')">View Source</button>
-    <button class="btn btn-danger" onclick="delHandler('${h.name}')">Delete</button>
-    </div>`).join('') : '<p style="color:#999">No handlers</p>';
+  document.getElementById('handlers').innerHTML = hs.length ? hs.map(h =>
+    '<div class="handler-card"><b>'+h.name+'</b>'
+    +'<div class="handler-meta">v'+h.version+' | deps: '+(h.deps.join(', ')||'none')+' | '+h.updated+'</div>'
+    +'<button class="btn btn-ghost btn-sm" onclick="viewHandler(\\x27'+h.name+'\\x27)">View</button> '
+    +'<button class="btn btn-danger btn-sm" onclick="delHandler(\\x27'+h.name+'\\x27)">Delete</button>'
+    +'</div>').join('') : '<p style="padding:14px;color:#999">No handlers</p>';
 
-  document.getElementById('events').innerHTML = evs.map(e => `<tr class="${
-    e.event==='error'?'event-error':e.event==='blocked'?'event-blocked':''}">
-    <td>${e.time}</td><td>${e.worker}</td><td>${e.task_id}</td>
-    <td><span class="status status-${e.event}">${e.event}</span></td>
-    <td>${e.detail||'-'}</td></tr>`).join('');
+  document.getElementById('events').innerHTML = evs.map(e => {
+    const cls = e.event==='error'?'badge-error':e.event==='retrying'?'badge-retrying':e.event==='ok'?'badge-ok':'badge-idle';
+    return '<tr><td>'+e.time+'</td><td>'+e.worker+'</td><td>'+e.task_id+'</td>'
+      +'<td><span class="badge '+cls+'">'+e.event+'</span></td>'
+      +'<td>'+( e.detail||'-')+'</td></tr>';
+  }).join('');
 
   document.getElementById('d-min').value = dl.min_delay;
   document.getElementById('d-max').value = dl.max_delay;
@@ -350,22 +370,19 @@ async function refresh() {
   document.getElementById('d-bp').value = dl.batch_pause;
 }
 
-function card(label, value, cls, sub) {
-  return `<div class="card"><div class="label">${label}</div><div class="value ${cls}">${value}</div>${sub ? `<div style="font-size:12px;color:#999;margin-top:4px">${sub}</div>` : ''}</div>`;
+function card(l, v, cls, sub) {
+  return '<div class="card"><div class="label">'+l+'</div><div class="value '+cls+'">'+v+'</div>'+(sub?'<div class="sub">'+sub+'</div>':'')+'</div>';
 }
 
-async function ctrlWorker(name, action) {
-  await F('/api/worker/' + encodeURIComponent(name) + '/' + action, {method:'POST'});
+async function ctrlWorker(n, a) {
+  await F('/api/worker/'+encodeURIComponent(n)+'/'+a, {method:'POST'});
   refresh();
 }
-
 async function purgeQueue() {
   if (!confirm('Purge all tasks in queue?')) return;
   const r = await F('/api/queue/purge', {method:'POST'});
-  alert('Purged ' + r.removed + ' tasks');
-  refresh();
+  alert('Purged '+r.removed+' tasks'); refresh();
 }
-
 async function saveDelay() {
   await F('/api/delay', {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({
@@ -373,77 +390,56 @@ async function saveDelay() {
       max_delay: parseFloat(document.getElementById('d-max').value),
       batch_size: parseInt(document.getElementById('d-bs').value),
       batch_pause: parseFloat(document.getElementById('d-bp').value),
-    })});
-  alert('Saved'); refresh();
+    })}); alert('Saved'); refresh();
 }
-
-async function viewHandler(name) {
-  const h = await F('/api/handler/' + encodeURIComponent(name));
+async function viewHandler(n) {
+  const h = await F('/api/handler/'+encodeURIComponent(n));
   alert(h.source);
 }
-
-async function delHandler(name) {
-  if (!confirm('Delete handler: ' + name + '?')) return;
-  await F('/api/handler/' + encodeURIComponent(name), {method:'DELETE'});
-  refresh();
+async function delHandler(n) {
+  if (!confirm('Delete handler: '+n+'?')) return;
+  await F('/api/handler/'+encodeURIComponent(n), {method:'DELETE'}); refresh();
 }
 
 function showUploadHandler() {
-  const name = prompt('Handler name');
-  if (!name) return;
-  const source = prompt('Paste handler source (must contain def handle(params))');
-  if (!source) return;
-  const deps = prompt('Dependencies (comma separated, leave empty if none)', '');
-  F('/api/handler/' + encodeURIComponent(name), {method:'POST',
+  const n = prompt('Handler name'); if (!n) return;
+  const s = prompt('Paste handler source (must contain def handle(params))'); if (!s) return;
+  const d = prompt('Dependencies (comma separated)', '');
+  F('/api/handler/'+encodeURIComponent(n), {method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({source, deps: deps ? deps.split(',').map(s=>s.trim()) : []})
-  }).then(() => { alert('Uploaded'); refresh(); });
+    body: JSON.stringify({source:s, deps:d?d.split(',').map(x=>x.trim()):[]})
+  }).then(()=>{ alert('Uploaded'); refresh(); });
 }
-
 function showSubmit() {
-  const handler = prompt('Handler name');
-  if (!handler) return;
-  const params = prompt('Params JSON', '{}');
-  if (params === null) return;
+  const h = prompt('Handler name'); if (!h) return;
+  const p = prompt('Params JSON', '{}'); if (p===null) return;
   F('/api/submit', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({handler, params: JSON.parse(params)})
-  }).then(r => { alert('Submitted: ' + r.task_id); refresh(); });
+    body: JSON.stringify({handler:h, params:JSON.parse(p)})
+  }).then(r=>{ alert('Submitted: '+r.task_id); refresh(); });
 }
-
-async function setWorkerDelay(name, curMin, curMax, curBs, curBp) {
-  const min = prompt('min_delay (seconds)', curMin);
-  if (min === null) return;
-  const max = prompt('max_delay (seconds)', curMax);
-  if (max === null) return;
-  const bs = prompt('batch_size (0=disabled)', curBs);
-  if (bs === null) return;
-  const bp = prompt('batch_pause (seconds)', curBp);
-  if (bp === null) return;
-  await F('/api/delay/' + encodeURIComponent(name), {method:'POST',
+async function setWorkerDelay(name, cMin, cMax, cBs, cBp) {
+  const mi=prompt('min_delay (s)',cMin); if(mi===null)return;
+  const ma=prompt('max_delay (s)',cMax); if(ma===null)return;
+  const bs=prompt('batch_size (0=off)',cBs); if(bs===null)return;
+  const bp=prompt('batch_pause (s)',cBp); if(bp===null)return;
+  await F('/api/delay/'+encodeURIComponent(name), {method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({min_delay:parseFloat(min),max_delay:parseFloat(max),
-      batch_size:parseInt(bs),batch_pause:parseFloat(bp)})});
+    body:JSON.stringify({min_delay:+mi,max_delay:+ma,batch_size:+bs,batch_pause:+bp})});
   refresh();
 }
-
-async function resetWorkerDelay(name) {
-  if (!confirm('Reset ' + name + ' to global delay?')) return;
-  await F('/api/delay/' + encodeURIComponent(name), {method:'DELETE'});
-  refresh();
+async function resetWorkerDelay(n) {
+  if (!confirm('Reset '+n+' to global delay?')) return;
+  await F('/api/delay/'+encodeURIComponent(n), {method:'DELETE'}); refresh();
 }
-
 async function clearEvents() {
   if (!confirm('Clear all event logs?')) return;
-  await F('/api/events/clear', {method:'POST'});
-  refresh();
+  await F('/api/events/clear', {method:'POST'}); refresh();
 }
-
 async function clearStats() {
-  if (!confirm('Reset all stats (success/failed/retried)?')) return;
-  await F('/api/stats/clear', {method:'POST'});
-  refresh();
+  if (!confirm('Reset all stats?')) return;
+  _wSamples = {};
+  await F('/api/stats/clear', {method:'POST'}); refresh();
 }
-
 refresh();
 setInterval(refresh, 5000);
 </script>
