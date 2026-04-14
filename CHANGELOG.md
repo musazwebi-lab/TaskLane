@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.2.1 (2026-04-14)
+
+### Fixes
+
+- **pip install from git fails on old setuptools**: Added `setup.cfg` with name/version for compatibility with setuptools < 61 which cannot read `[project]` from `pyproject.toml`.
+
+---
+
 ## v0.2.0 (2026-04-10)
 
 ### Features
